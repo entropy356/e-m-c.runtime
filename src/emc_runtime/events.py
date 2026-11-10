@@ -29,7 +29,9 @@ class EventBus:
         self._subscribers.append(subscriber)
 
     def publish(self, event: dict) -> None:
-        for subscriber in list(self._subscribers):
+        # Iterate a snapshot: a subscriber may subscribe another one mid-publish,
+        # and the newcomer must not receive the event it was registered during.
+        for subscriber in self._subscribers[:]:
             try:
                 subscriber(event)
             except Exception as error:  # noqa: BLE001 - isolation is the contract

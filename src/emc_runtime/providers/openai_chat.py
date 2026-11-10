@@ -21,6 +21,7 @@ DEFAULT_API_KEY_ENV = "OPENAI_API_KEY"
 DEFAULT_TIMEOUT = 60.0
 DEFAULT_MAX_ATTEMPTS = 3
 _BACKOFF = (2.0, 5.0)
+_RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
 
 
 class ProviderHTTPError(ProviderError):
@@ -30,6 +31,23 @@ class ProviderHTTPError(ProviderError):
             message += f" ({hint})"
         super().__init__(message)
         self.code = code
+
+
+def _build_opener(proxy: str | None):
+    if proxy:
+        return urllib.request.build_opener(
+            urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+        )
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def _retry_delay(error: urllib.error.HTTPError, attempt: int) -> float:
+    """Honour Retry-After when the server sends one, else back off gently."""
+    try:
+        wait = float(error.headers.get("Retry-After") or 0)
+    except (TypeError, ValueError):
+        wait = 0.0
+    return max(0.25, min(wait or _BACKOFF[min(attempt, 1)], 30.0))
 
 
 def http_post_json(
@@ -42,31 +60,22 @@ def http_post_json(
 ) -> dict:
     """POST JSON with bounded retry on transient errors. Test seam for fakes."""
     body = json.dumps(payload, ensure_ascii=False).encode()
-    handlers = (
-        [urllib.request.ProxyHandler({"http": proxy, "https": proxy})]
-        if proxy
-        else [urllib.request.ProxyHandler({})]
-    )
-    opener = urllib.request.build_opener(*handlers)
+    opener = _build_opener(proxy)
+    last_attempt = max_attempts - 1
     for attempt in range(max_attempts):
         request = urllib.request.Request(url, body, {**headers, "Content-Type": "application/json"})
         try:
             with opener.open(request, timeout=timeout) as response:
                 return json.load(response)
         except urllib.error.HTTPError as error:
-            if error.code in (429, 500, 502, 503, 504) and attempt < max_attempts - 1:
-                try:
-                    wait = float(error.headers.get("Retry-After") or 0)
-                except (TypeError, ValueError):
-                    wait = 0
-                time.sleep(max(0.25, min(wait or _BACKOFF[min(attempt, 1)], 30.0)))
-                continue
-            raise ProviderHTTPError(error.code) from None
-        except (urllib.error.URLError, TimeoutError, OSError):
-            if attempt < max_attempts - 1:
-                time.sleep(_BACKOFF[min(attempt, 1)])
-                continue
-            raise ProviderError("provider connection failed or timed out") from None
+            if error.code not in _RETRYABLE_STATUS or attempt >= last_attempt:
+                raise ProviderHTTPError(error.code) from None
+            time.sleep(_retry_delay(error, attempt))
+        except OSError:
+            # URLError and TimeoutError are both OSError subclasses.
+            if attempt >= last_attempt:
+                raise ProviderError("provider connection failed or timed out") from None
+            time.sleep(_BACKOFF[min(attempt, 1)])
         except (json.JSONDecodeError, UnicodeError):
             raise ProviderError("provider returned invalid JSON") from None
     raise ProviderError("provider request failed")

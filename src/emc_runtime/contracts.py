@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Literal, Mapping, Protocol, Sequence, runtime_checkable
 
@@ -193,45 +195,65 @@ class CognitionStrategy(Protocol):
     ) -> AssistantReply: ...
 
 
+_WHITESPACE = re.compile(r"\s")
+
+#: Longest accepted user_message content, in characters.
+MAX_CONTENT_CHARS = 12000
+
+
+def _validated_conversation_id(raw: Any) -> str:
+    if not isinstance(raw, str):
+        raise EventValidationError("event.conversation_id must be text")
+    conversation_id = raw.strip()
+    if not conversation_id or len(conversation_id) > 128:
+        raise EventValidationError("conversation_id must be 1-128 characters")
+    if _WHITESPACE.search(conversation_id):
+        raise EventValidationError("conversation_id cannot contain whitespace")
+    if conversation_id == AGENT_SCOPE_KEY:
+        raise EventValidationError(f"conversation_id {AGENT_SCOPE_KEY!r} is reserved")
+    return conversation_id
+
+
+def _validated_content(kind: str, content: Any) -> str | None:
+    if kind != "user_message":
+        if content is not None and not isinstance(content, str):
+            raise EventValidationError("internal_trigger content must be text or null")
+        return content
+    if not isinstance(content, str) or not content.strip():
+        raise EventValidationError("user_message requires nonempty content text")
+    if len(content) > MAX_CONTENT_CHARS:
+        raise EventValidationError(
+            f"user_message content exceeds {MAX_CONTENT_CHARS} characters"
+        )
+    return content.strip()
+
+
+def _validated_metadata(metadata: Any) -> dict:
+    try:
+        normalized = dict(metadata or {})
+    except (TypeError, ValueError) as error:
+        raise EventValidationError("event.metadata must be a JSON object") from error
+    check_json_value(normalized, "event.metadata")
+    return normalized
+
+
+def _validated_event_id(raw: Any) -> str:
+    event_id = raw or uuid.uuid4().hex
+    if not isinstance(event_id, str) or not event_id.strip():
+        raise EventValidationError("event.event_id must be nonempty text")
+    return event_id.strip()
+
+
 def validate_event(event: Event) -> Event:
     """Normalize and validate one input event; fills event_id when missing."""
-    import re
-    import uuid
-
     if event.kind not in EVENT_KINDS:
         raise EventValidationError(
             f"event.kind must be one of {EVENT_KINDS}, got {event.kind!r}"
         )
-    if not isinstance(event.conversation_id, str):
-        raise EventValidationError("event.conversation_id must be text")
-    conversation_id = event.conversation_id.strip()
-    if not conversation_id or len(conversation_id) > 128:
-        raise EventValidationError("conversation_id must be 1-128 characters")
-    if re.search(r"\s", conversation_id):
-        raise EventValidationError("conversation_id cannot contain whitespace")
-    if conversation_id == AGENT_SCOPE_KEY:
-        raise EventValidationError(f"conversation_id {AGENT_SCOPE_KEY!r} is reserved")
-    content = event.content
-    if event.kind == "user_message":
-        if not isinstance(content, str) or not content.strip():
-            raise EventValidationError("user_message requires nonempty content text")
-        if len(content) > 12000:
-            raise EventValidationError("user_message content exceeds 12000 characters")
-        content = content.strip()
-    else:
-        if content is not None and not isinstance(content, str):
-            raise EventValidationError("internal_trigger content must be text or null")
-    metadata = dict(event.metadata or {})
-    if not isinstance(metadata, dict):
-        raise EventValidationError("event.metadata must be a JSON object")
-    check_json_value(metadata, "event.metadata")
-    event_id = event.event_id or uuid.uuid4().hex
-    if not isinstance(event_id, str) or not event_id.strip():
-        raise EventValidationError("event.event_id must be nonempty text")
     return Event(
         kind=event.kind,
-        conversation_id=conversation_id,
-        content=content,
-        metadata=metadata,
-        event_id=event_id.strip(),
+        conversation_id=_validated_conversation_id(event.conversation_id),
+        content=_validated_content(event.kind, event.content),
+        metadata=_validated_metadata(event.metadata),
+        event_id=_validated_event_id(event.event_id),
     )

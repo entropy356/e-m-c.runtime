@@ -19,6 +19,8 @@ from .contracts import ConcurrencyConflict, EMCError, Message, dumps_json
 
 SCHEMA_VERSION = 1
 
+_SELECT_REVISION = "SELECT revision FROM runtime_meta WHERE singleton_id=1"
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS runtime_meta (
     singleton_id    INTEGER PRIMARY KEY CHECK(singleton_id = 1),
@@ -125,9 +127,7 @@ class Storage:
         with _connect(self.path) as db:
             db.execute("BEGIN")
             try:
-                revision = db.execute(
-                    "SELECT revision FROM runtime_meta WHERE singleton_id=1"
-                ).fetchone()[0]
+                revision = db.execute(_SELECT_REVISION).fetchone()[0]
                 history = tuple(
                     Message(
                         conversation_id=row[0],
@@ -180,9 +180,7 @@ class Storage:
 
     def revision(self) -> int:
         with _connect(self.path) as db:
-            return db.execute(
-                "SELECT revision FROM runtime_meta WHERE singleton_id=1"
-            ).fetchone()[0]
+            return db.execute(_SELECT_REVISION).fetchone()[0]
 
     def module_state(self, module_id: str, scope_key: str) -> ModuleStateEntry | None:
         """Read-only module state lookup; never creates missing state."""
@@ -250,9 +248,7 @@ class Storage:
         with _connect(self.path) as db:
             try:
                 db.execute("BEGIN IMMEDIATE")
-                current_revision = db.execute(
-                    "SELECT revision FROM runtime_meta WHERE singleton_id=1"
-                ).fetchone()[0]
+                current_revision = db.execute(_SELECT_REVISION).fetchone()[0]
                 if current_revision != expected_revision:
                     raise ConcurrencyConflict(
                         f"revision changed from {expected_revision} to {current_revision} "

@@ -30,7 +30,7 @@ class CounterModule:
     def expose(self, state: Any) -> Any:
         return {"count": state["count"]}
 
-    def prepare(self, event: Event, state: Any, ctx: ModuleContext) -> Prepared:
+    def prepare(self, event: Event, state: Any, _ctx: ModuleContext) -> Prepared:
         working = {"count": state["count"] + 1}
         block = ContextBlock(
             source=self.module_id,
@@ -43,7 +43,7 @@ class CounterModule:
         )
 
     def finalize(
-        self, event: Event, prepared: Prepared, reply: AssistantReply, ctx: ModuleContext
+        self, event: Event, prepared: Prepared, _reply: AssistantReply, _ctx: ModuleContext
     ) -> Finalized:
         return Finalized(
             state=prepared.working_state,

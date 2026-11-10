@@ -140,7 +140,7 @@ def cmd_history(args, config) -> int:
     return 0
 
 
-def cmd_inspect(args, config, engine) -> int:
+def cmd_inspect(args, config) -> int:
     storage = Storage(config.database)
     from .modules import ModuleRegistry  # loaded lazily to keep imports honest
 
@@ -192,6 +192,52 @@ def cmd_inspect(args, config, engine) -> int:
     return 0
 
 
+# Outcomes of _handle_command: end the session, already handled, or not a command.
+_EXIT_SESSION = "exit"
+_COMMAND_HANDLED = "handled"
+_NOT_A_COMMAND = "not-a-command"
+
+
+def _print_history(storage: Storage, conversation: str, argument: str | None) -> None:
+    messages = storage.history(conversation)
+    if argument and argument != "all":
+        try:
+            messages = messages[-int(argument) :]
+        except ValueError:
+            print("用法：/history [条数|all]")
+            return
+    for message in messages:
+        print(f"{message.seq:4d} {message.role:9s} {message.content}")
+
+
+def _run_trigger(args, engine, reason: str | None) -> None:
+    metadata = {"reason": reason} if reason else {}
+    result = engine.run(
+        Event(
+            kind="internal_trigger",
+            conversation_id=args.conversation,
+            metadata=metadata,
+        )
+    )
+    print(f"agent> {result.reply}")
+
+
+def _handle_command(line: str, args, engine, storage: Storage) -> str:
+    """Execute one REPL slash command, or report that the line is not one."""
+    if line in ("/exit", "/quit"):
+        return _EXIT_SESSION
+    if line.startswith("/help"):
+        print(CHAT_HELP)
+        return _COMMAND_HANDLED
+    if line.startswith("/history"):
+        _print_history(storage, args.conversation, line.partition(" ")[2].strip() or None)
+        return _COMMAND_HANDLED
+    if line.startswith("/trigger"):
+        _run_trigger(args, engine, line.partition(" ")[2].strip() or None)
+        return _COMMAND_HANDLED
+    return _NOT_A_COMMAND
+
+
 def cmd_chat(args, engine, config) -> int:
     storage = Storage(config.database)
     print(f"emc-runtime chat · 会话 {args.conversation} · {CHAT_HELP}")
@@ -203,34 +249,10 @@ def cmd_chat(args, engine, config) -> int:
             break
         if not line:
             continue
-        if line in ("/exit", "/quit"):
+        outcome = _handle_command(line, args, engine, storage)
+        if outcome == _EXIT_SESSION:
             break
-        if line == "/help":
-            print(CHAT_HELP)
-            continue
-        if line.startswith("/history"):
-            parts = line.split(maxsplit=1)
-            messages = storage.history(args.conversation)
-            if len(parts) == 2 and parts[1] != "all":
-                try:
-                    messages = messages[-int(parts[1]) :]
-                except ValueError:
-                    print("用法：/history [条数|all]")
-                    continue
-            for message in messages:
-                print(f"{message.seq:4d} {message.role:9s} {message.content}")
-            continue
-        if line.startswith("/trigger"):
-            parts = line.split(maxsplit=1)
-            reason = parts[1] if len(parts) == 2 else None
-            result = engine.run(
-                Event(
-                    kind="internal_trigger",
-                    conversation_id=args.conversation,
-                    metadata={"reason": reason} if reason else {},
-                )
-            )
-            print(f"agent> {result.reply}")
+        if outcome == _COMMAND_HANDLED:
             continue
         result = engine.run(
             Event(kind="user_message", conversation_id=args.conversation, content=line)
@@ -240,7 +262,7 @@ def cmd_chat(args, engine, config) -> int:
 
 
 def cmd_scenario(args, engine) -> int:
-    path = args.file  # 已由 _readable_arg 规范化并校验
+    path = args.file  # already normalized and checked by _readable_arg
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
@@ -281,7 +303,7 @@ def main(argv=None) -> int:
         if args.command == "history":
             return cmd_history(args, config)
         if args.command == "inspect":
-            return cmd_inspect(args, config, engine)
+            return cmd_inspect(args, config)
         if args.command == "scenario":
             return cmd_scenario(args, engine)
         parser.error(f"unknown command {args.command!r}")

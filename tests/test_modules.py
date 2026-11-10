@@ -127,8 +127,9 @@ class StateVersionTest(TempDirTestCase):
 
         v2 = offline_config(self.tmp, modules=[spec_for(VersionedModule, config={"version": 2})])
         engine2, storage2 = make_engine(v2)
+        payload = event("user_message", "b")
         with self.assertRaises(ModuleStateVersionError):
-            engine2.run(event("user_message", "b"))
+            engine2.run(payload)
         # stored state is left untouched
         self.assertEqual(storage2.module_state("versioned", "default").state, {"n": 1})
 

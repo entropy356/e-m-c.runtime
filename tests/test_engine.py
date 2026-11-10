@@ -31,6 +31,11 @@ from .helpers import (
 )
 
 
+def user_message(content: str) -> Event:
+    """Build the event up front so assertRaises blocks hold a single call."""
+    return Event(kind="user_message", content=content)
+
+
 def make_engine(config, provider=None):
     storage = Storage(config.database)
     registry = ModuleRegistry(config.modules)
@@ -82,8 +87,9 @@ class ModuleFailureIsolationTest(TempDirTestCase):
         config = offline_config(self.tmp, modules=[spec_for(BreakingPrepareModule)])
         engine, storage, provider = make_engine(config)
         before = self._counts(storage)
+        payload = user_message("boom")
         with self.assertRaises(EMCError):
-            engine.run(Event(kind="user_message", content="boom"))
+            engine.run(payload)
         self.assertEqual(self._counts(storage), before)
         self.assertEqual(len(provider.calls), 0)  # model never called
 
@@ -91,13 +97,14 @@ class ModuleFailureIsolationTest(TempDirTestCase):
         config = offline_config(self.tmp, modules=[])
         engine, storage, _ = make_engine(config, provider=FlakyProvider(failures=1))
         before = self._counts(storage)
+        payload = user_message("hi")
         with self.assertRaises(EMCError):
-            engine.run(Event(kind="user_message", content="hi"))
+            engine.run(payload)
         self.assertEqual(self._counts(storage), before)
 
         engine2, storage2, _ = make_engine(config, provider=EmptyReplyProvider())
         with self.assertRaises(EMCError):
-            engine2.run(Event(kind="user_message", content="hi"))
+            engine2.run(payload)
         self.assertEqual(self._counts(storage2), before)
 
     def test_t08_finalize_exception_aborts_after_model_call(self):
@@ -106,8 +113,9 @@ class ModuleFailureIsolationTest(TempDirTestCase):
         )
         engine, storage, provider = make_engine(config)
         before = self._counts(storage)
+        payload = user_message("hi")
         with self.assertRaises(EMCError):
-            engine.run(Event(kind="user_message", content="hi"))
+            engine.run(payload)
         self.assertEqual(len(provider.calls), 1)  # model was paid for...
         self.assertEqual(self._counts(storage), before)  # ...but nothing was written
 
@@ -123,8 +131,9 @@ class ModuleFailureIsolationTest(TempDirTestCase):
             ],
         )
         engine, storage, provider = make_engine(config)
+        payload = user_message("hi")
         with self.assertRaises(ConcurrencyConflict):
-            engine.run(Event(kind="user_message", content="hi"))
+            engine.run(payload)
         self.assertEqual(len(provider.calls), 1)  # exactly one model request
         self.assertEqual(len(storage.history("default")), 0)
         self.assertEqual(storage.recent_turns(), [])  # no turn record either
@@ -133,8 +142,9 @@ class ModuleFailureIsolationTest(TempDirTestCase):
         config = offline_config(self.tmp, modules=[spec_for(NaNStateModule)])
         engine, storage, provider = make_engine(config)
         before = self._counts(storage)
+        payload = user_message("hi")
         with self.assertRaises(EMCError):
-            engine.run(Event(kind="user_message", content="hi"))
+            engine.run(payload)
         self.assertEqual(self._counts(storage), before)
 
 
@@ -142,8 +152,9 @@ class ContractEnforcementTest(TempDirTestCase):
     def test_spoofed_context_block_source_rejected(self):
         config = offline_config(self.tmp, modules=[spec_for(SpoofedBlockModule)])
         engine, storage, _ = make_engine(config)
+        payload = user_message("hi")
         with self.assertRaises(ModuleContractError):
-            engine.run(Event(kind="user_message", content="hi"))
+            engine.run(payload)
         self.assertEqual(len(storage.history("default")), 0)
 
 

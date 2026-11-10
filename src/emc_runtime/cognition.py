@@ -35,7 +35,7 @@ class DirectStrategy:
         return AssistantReply(content=reply.content.strip())
 
 
-def make_cognition(kind: str, params: Mapping[str, Any]) -> CognitionStrategy:
+def make_cognition(kind: str, _params: Mapping[str, Any]) -> CognitionStrategy:
     if kind == "direct":
         return DirectStrategy()
     raise ConfigError(f"unknown cognition kind {kind!r}")

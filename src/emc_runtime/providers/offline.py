@@ -16,11 +16,11 @@ class OfflineChatProvider:
 
     kind = "offline"
 
-    def generate(self, messages: Sequence[dict], options: Mapping[str, Any]) -> AssistantReply:
+    def generate(self, messages: Sequence[dict], _options: Mapping[str, Any]) -> AssistantReply:
         last = messages[-1]["content"] if messages else ""
         reply = f"[offline] messages={len(messages)} last={last}"
         return AssistantReply(content=reply)
 
 
-def make_offline_provider(params: Mapping[str, Any]) -> OfflineChatProvider:
+def make_offline_provider(_params: Mapping[str, Any]) -> OfflineChatProvider:
     return OfflineChatProvider()
