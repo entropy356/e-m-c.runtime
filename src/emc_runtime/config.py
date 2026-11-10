@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from .contracts import ConfigError, SCOPES
+from .paths import PathSecurityError, readable_file
 
 SUPPORTED_SCHEMA_VERSION = 1
 PROVIDER_KINDS = ("offline", "openai-compatible")
@@ -131,15 +132,18 @@ def parse_config(data: Any) -> RuntimeConfig:
 
 
 def load_config(path: str | Path) -> RuntimeConfig:
-    path = Path(path)
     try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as error:
+        source = readable_file(path)
+    except PathSecurityError as error:
         raise ConfigError(f"cannot read configuration {path}: {error}") from error
+    try:
+        text = source.read_text(encoding="utf-8")
+    except OSError as error:
+        raise ConfigError(f"cannot read configuration {source}: {error}") from error
     try:
         data = json.loads(text)
     except json.JSONDecodeError as error:
-        raise ConfigError(f"configuration {path} is not valid JSON: {error}") from error
+        raise ConfigError(f"configuration {source} is not valid JSON: {error}") from error
     return parse_config(data)
 
 

@@ -17,6 +17,7 @@ from .config import load_config
 from .contracts import EMCError, Event
 from .engine import build_engine
 from .modules import scope_key_for
+from .paths import PathSecurityError, readable_file, writable_file
 from .storage import Storage
 
 CHAT_HELP = (
@@ -29,13 +30,28 @@ def _print_json(value) -> None:
     print(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False))
 
 
-def _write_json(path: str, value) -> None:
-    destination = Path(path)
+def _write_json(path, value) -> None:
+    destination = writable_file(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(
         json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
         encoding="utf-8",
     )
+
+
+def _readable_arg(raw: str) -> Path:
+    """argparse 用的路径类型：校验失败时报清晰的错，而不是 invalid value。"""
+    try:
+        return readable_file(raw)
+    except PathSecurityError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
+
+
+def _writable_arg(raw: str) -> Path:
+    try:
+        return writable_file(raw)
+    except PathSecurityError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
 
 
 def _add_conversation_argument(parser: argparse.ArgumentParser, default: str = "default") -> None:
@@ -47,7 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="emc-runtime",
         description="轻量单进程模块化 Agent 实验运行环境",
     )
-    parser.add_argument("--config", required=True, help="JSON 配置文件路径")
+    parser.add_argument("--config", required=True, type=_readable_arg, help="JSON 配置文件路径")
     parser.add_argument("--json", action="store_true", help="以 JSON 输出结果")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -69,8 +85,9 @@ def build_parser() -> argparse.ArgumentParser:
     _add_conversation_argument(inspect)
 
     scenario = sub.add_parser("scenario", help="按剧本依次执行事件")
-    scenario.add_argument("file", help="剧本 JSON 文件")
-    scenario.add_argument("--output", default=None, help="把结果写入 JSON 文件")
+    scenario.add_argument("file", type=_readable_arg, help="剧本 JSON 文件")
+    scenario.add_argument("--output", default=None, type=_writable_arg,
+                          help="把结果写入 JSON 文件")
     return parser
 
 
@@ -223,7 +240,7 @@ def cmd_chat(args, engine, config) -> int:
 
 
 def cmd_scenario(args, engine) -> int:
-    path = Path(args.file)
+    path = args.file  # 已由 _readable_arg 规范化并校验
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
