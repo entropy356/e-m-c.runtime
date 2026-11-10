@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "database": "data/basic.sqlite3",
+  "provider": { "kind": "offline" },
+  "cognition": { "kind": "direct" },
+  "system_prompt": "You are a helpful conversational agent.",
+  "modules": []
+}

@@ -1,0 +1,10 @@
+{
+  "name": "smoke",
+  "conversation_id": "default",
+  "events": [
+    { "kind": "user_message", "content": "你好" },
+    { "kind": "user_message", "content": "今天天气怎么样？" },
+    { "kind": "internal_trigger", "metadata": { "reason": "clock demo" } },
+    { "kind": "user_message", "content": "换个话题聊聊。", "conversation_id": "second" }
+  ]
+}

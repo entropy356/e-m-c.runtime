@@ -2,8 +2,5 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 
-# Runtime artifacts: databases and event port files are created by the demo
-data/*.sqlite3
-data/*.sqlite3-wal
-data/*.sqlite3-shm
-data/*.events.json
+# Runtime artifacts: local databases created by examples and smoke runs
+data/
