@@ -24,7 +24,7 @@ python -m emc_runtime --config examples/counter.json turn "再见" --conversatio
 python -m emc_runtime --config examples/counter.json inspect --conversation c1 --json
 # counter.state.count == 2：两个会话共享同一 agent 级状态
 
-# 内部触发（Clock 等未来事件源的接口；不伪造用户消息）
+# 内部事件触发
 python -m emc_runtime --config examples/counter.json trigger --conversation c1 --reason clock
 
 # 交互式聊天
