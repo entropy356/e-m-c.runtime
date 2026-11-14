@@ -6,7 +6,8 @@ Runtime 是可复用的基础设施：输入事件、模块调度、原始上下
 
 ## 开发约定
 
-- [项目文档与代码维护约定](https://github.com/entropy356/e-m-c.workbench/blob/main/rules/documentation.md)
+- [文档与文件约定](https://github.com/entropy356/e-m-c.workbench/blob/main/rules/documentation.md)
+- [代码维护约定](https://github.com/entropy356/e-m-c.workbench/blob/main/rules/code-maintenance.md)
 - [e-m-c.* 日常整理](https://github.com/entropy356/e-m-c.workbench/blob/main/rules/workflows/daily-maintenance.md)
 
 ## 安装
