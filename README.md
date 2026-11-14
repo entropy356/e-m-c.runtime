@@ -4,6 +4,11 @@
 
 Runtime 是可复用的基础设施：输入事件、模块调度、原始上下文、模型调用编排、状态事务、运行记录与 CLI。认知数学模型（Memory / Emotion / Clock 等）以独立模块形式接入，可以完全不装任何模块运行。
 
+## 开发约定
+
+- [项目文档与代码维护约定](https://github.com/entropy356/e-m-c.workbench/blob/main/rules/documentation.md)
+- [e-m-c.* 日常整理](https://github.com/entropy356/e-m-c.workbench/blob/main/rules/workflows/daily-maintenance.md)
+
 ## 安装
 
 ~~~bash
