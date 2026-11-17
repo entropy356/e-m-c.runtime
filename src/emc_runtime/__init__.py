@@ -22,8 +22,10 @@ from .contracts import (
 from .engine import Engine, build_engine
 from .events import EventBus
 from .storage import Storage
+from .session import TurnContext
+from .clock import Clock, SystemClock
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "AGENT_SCOPE_KEY",
@@ -45,6 +47,9 @@ __all__ = [
     "RunResult",
     "RuntimeConfig",
     "Storage",
+    "TurnContext",
+    "Clock",
+    "SystemClock",
     "build_engine",
     "load_config",
     "validate_event",

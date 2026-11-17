@@ -12,6 +12,7 @@ Fixed order, never renegotiated by modules:
 from __future__ import annotations
 
 from typing import Sequence
+import json
 
 from .contracts import ContextBlock, Event, Message
 
@@ -50,5 +51,7 @@ class ContextAssembler:
         else:
             # The trigger note reaches the model but is not stored as a user
             # message; the conversation history stays untouched.
-            messages.append({"role": "user", "content": internal_trigger_prompt})
+            messages.append({"role": "user", "content": internal_trigger_prompt + "\n" + json.dumps(
+                    {"occurred_at": event.occurred_at, "content": event.content,
+                     "metadata": dict(event.metadata)}, ensure_ascii=False)})
         return messages

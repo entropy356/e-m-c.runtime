@@ -88,6 +88,12 @@ def build_parser() -> argparse.ArgumentParser:
     scenario.add_argument("file", type=_readable_arg, help="剧本 JSON 文件")
     scenario.add_argument("--output", default=None, type=_writable_arg,
                           help="把结果写入 JSON 文件")
+    sub.add_parser("attempts", help="查看调用记录与失败尝试")
+    sub.add_parser("schedules", help="查看待执行事件")
+    due = sub.add_parser("run-due", help="执行一批已到期事件")
+    due.add_argument("--limit", type=int, default=100)
+    fork = sub.add_parser("fork", help="复制一致的数据库快照用于独立实验")
+    fork.add_argument("destination", type=_writable_arg)
     return parser
 
 
@@ -99,7 +105,7 @@ def cmd_turn(args, engine) -> int:
     result = engine.run(event)
     if args.json:
         _print_json(result.to_json_dict())
-    else:
+    elif result.reply is not None:
         print(result.reply)
     return 0
 
@@ -112,7 +118,7 @@ def cmd_trigger(args, engine) -> int:
     result = engine.run(event)
     if args.json:
         _print_json(result.to_json_dict())
-    else:
+    elif result.reply is not None:
         print(result.reply)
     return 0
 
@@ -219,7 +225,8 @@ def _run_trigger(args, engine, reason: str | None) -> None:
             metadata=metadata,
         )
     )
-    print(f"agent> {result.reply}")
+    if result.reply is not None:
+        print(f"agent> {result.reply}")
 
 
 def _handle_command(line: str, args, engine, storage: Storage) -> str:
@@ -257,7 +264,8 @@ def cmd_chat(args, engine, config) -> int:
         result = engine.run(
             Event(kind="user_message", conversation_id=args.conversation, content=line)
         )
-        print(f"agent> {result.reply}")
+        if result.reply is not None:
+            print(f"agent> {result.reply}")
     return 0
 
 
@@ -279,6 +287,8 @@ def cmd_scenario(args, engine) -> int:
             conversation_id=item.get("conversation_id", default_conversation),
             content=item.get("content"),
             metadata=item.get("metadata", {}),
+            event_id=item.get("event_id", ""),
+            occurred_at=item.get("occurred_at"),
         )
         results.append(engine.run(event).to_json_dict())
     payload = {"scenario": data.get("name", path.stem), "results": results}
@@ -293,17 +303,30 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     try:
         config = load_config(args.config)
+        if args.command == "history":
+            return cmd_history(args, config)
+        if args.command == "inspect":
+            return cmd_inspect(args, config)
+        if args.command == "attempts":
+            _print_json(Storage(config.database).attempts())
+            return 0
+        if args.command == "schedules":
+            _print_json(Storage(config.database).pending_events())
+            return 0
+        if args.command == "fork":
+            copied = Storage(config.database).fork(str(args.destination))
+            _print_json({"database": copied.path, "revision": copied.revision()})
+            return 0
         engine = build_engine(config)
+        if args.command == "run-due":
+            _print_json([result.to_json_dict() for result in engine.run_due(limit=args.limit)])
+            return 0
         if args.command == "turn":
             return cmd_turn(args, engine)
         if args.command == "chat":
             return cmd_chat(args, engine, config)
         if args.command == "trigger":
             return cmd_trigger(args, engine)
-        if args.command == "history":
-            return cmd_history(args, config)
-        if args.command == "inspect":
-            return cmd_inspect(args, config)
         if args.command == "scenario":
             return cmd_scenario(args, engine)
         parser.error(f"unknown command {args.command!r}")

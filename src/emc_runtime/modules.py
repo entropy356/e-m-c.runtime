@@ -8,6 +8,7 @@ the contract surface and keeps the configured order.
 from __future__ import annotations
 
 import importlib
+import copy
 from types import MappingProxyType
 from typing import Any, Mapping
 
@@ -124,9 +125,9 @@ class ModuleRegistry:
 
     @staticmethod
     def make_context(event: Event, history, exports: Mapping[str, Any]) -> ModuleContext:
-        """Frozen, read-only view for one module call."""
+        """Immutable history and isolated event/export data for one module call."""
         return ModuleContext(
-            event=event,
+            event=copy.deepcopy(event),
             history=tuple(history),
-            exports=MappingProxyType(dict(exports)),
+            exports=MappingProxyType(copy.deepcopy(dict(exports))),
         )

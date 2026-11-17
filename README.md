@@ -1,121 +1,117 @@
 # e-m-c.runtime
 
-轻量、单进程、Python 模块化的 Agent 实验运行环境（Python ≥ 3.10，零第三方依赖）。
+用于 e-m-c 研究的轻量 Python 运行环境：持久化状态、原始经历、模型调用、时间与延迟事件、实验记录和快照分支。Python ≥ 3.10，零第三方运行依赖。
 
-Runtime 是可复用的基础设施：输入事件、模块调度、原始上下文、模型调用编排、状态事务、运行记录与 CLI。认知数学模型（Memory / Emotion / Clock 等）以独立模块形式接入，可以完全不装任何模块运行。
+认知流程由普通 Python 类实现，可以自行安排读取经历、检索、模型调用、状态更新和调度的顺序。研究方向见 [e-m-c.workbench](https://github.com/entropy356/e-m-c.workbench)。
 
-## 开发约定
+## 运行
 
-- [文档与文件约定](https://github.com/entropy356/e-m-c.workbench/blob/main/rules/documentation.md)
-- [代码维护约定](https://github.com/entropy356/e-m-c.workbench/blob/main/rules/code-maintenance.md)
-- [e-m-c.* 日常整理](https://github.com/entropy356/e-m-c.workbench/blob/main/rules/workflows/daily-maintenance.md)
-
-## 安装
-
-~~~bash
-git clone https://github.com/entropy356/e-m-c.runtime
-cd e-m-c.runtime
-pip install -e .        # 或：export PYTHONPATH=src 后从仓库根目录运行
-~~~
-
-## 快速开始（离线，无网络）
-
-~~~bash
-# 最小配置：modules 为空
+```bash
+pip install -e .
 python -m emc_runtime --config examples/basic.json turn "你好"
+python -m emc_runtime --config examples/counter.json chat
+python -m emc_runtime --config examples/research.json turn "记录一次经历"
+python -m emc_runtime --config examples/research.json attempts
+```
 
-# 计数器模块：每轮加一，agent 作用域（跨会话共享）
-python -m emc_runtime --config examples/counter.json turn "你好" --conversation c1
-python -m emc_runtime --config examples/counter.json turn "再见" --conversation c2
-python -m emc_runtime --config examples/counter.json inspect --conversation c1 --json
-# counter.state.count == 2：两个会话共享同一 agent 级状态
+也可从仓库根目录设置 `PYTHONPATH=src` 运行。`examples` 中的类通过仓库根目录导入。
 
-# 内部事件触发
-python -m emc_runtime --config examples/counter.json trigger --conversation c1 --reason clock
+## 研究入口
 
-# 交互式聊天
-python -m emc_runtime --config examples/counter.json chat --conversation c1
+```python
+from emc_runtime import AssistantReply
 
-# 批量剧本
-python -m emc_runtime --config examples/basic.json scenario scenarios/smoke.json
-~~~
+class Workflow:
+    def __init__(self, config):
+        self.options = config.get("options", {})
 
-## 真实 API 配置
+    def run(self, ctx):
+        state = ctx.state.get("experiment", scope="agent", default={})
+        sources = ctx.experiences.query(text="某个细节", limit=10)
+        ctx.observe("retrieved_sources", [m.message_id for m in sources])
+        messages = ctx.assemble(history_limit=20)
+        reply = ctx.models.chat(messages, options=self.options, purpose="reply")
+        ctx.state.set("experiment", {**state, "last_time": ctx.now})
+        return reply
+```
 
-Provider 只负责 OpenAI 兼容的 `/chat/completions` 传输，不内置任何记忆协议：
+配置 `cognition.kind="python"`，`entrypoint="package.module:Workflow"`，`config` 传给构造器。完整示例见 [examples/research_workflow.py](examples/research_workflow.py)。`run(ctx)` 可返回 `AssistantReply`，或返回 `None` 完成无对外回复的状态更新。
 
-~~~json
+| 接口 | 用途 |
+| --- | --- |
+| `ctx.state.get/set` | agent / conversation 作用域的版本化 JSON 状态；写入随整轮提交 |
+| `ctx.models.chat` | 选择命名模型，逐次传入推理参数、结构化输出参数，记录调用与 usage |
+| `ctx.models.embed` | 按需调用命名 embedding 服务并记录结果 |
+| `ctx.experiences.query` | 跨会话查询已提交的原文，返回消息 ID、会话、时间和 turn 来源 |
+| `ctx.assemble` | 使用指定历史与数据块组装输入，原文存储独立保留 |
+| `ctx.now` / `ctx.event.occurred_at` | 本轮开始时间 / 事件发生时间，统一 UTC |
+| `ctx.scheduler.schedule/cancel` | 暂存一次性延迟事件或取消请求，随本轮原子提交 |
+| `ctx.observe` | 保存研究自定义观察量 |
+| `Storage.fork` | 复制一致的数据库快照，开展独立对照实验 |
+
+## 模型配置
+
+根级 `provider` 是默认聊天模型；`models` 和 `embeddings` 分别声明其他命名服务，首次使用时加载。
+
+```json
 {
   "schema_version": 1,
-  "database": "data/agent.sqlite3",
+  "database": "data/experiment.sqlite3",
   "provider": {
     "kind": "openai-compatible",
-    "base_url": "https://api.openai.com/v1",
-    "model": "gpt-4o-mini",
-    "api_key_env": "OPENAI_API_KEY",
-    "timeout": 60,
-    "proxy": null,
-    "options": { "temperature": 0.2 }
+    "base_url": "https://api.example.com/v1",
+    "model": "your-model",
+    "api_key_env": "MODEL_API_KEY",
+    "options": {"temperature": 0.2},
+    "max_attempts": 1
   },
-  "cognition": { "kind": "direct" },
-  "system_prompt": "You are a helpful conversational agent.",
-  "modules": [
-    {
-      "id": "counter",
-      "entrypoint": "examples.counter_module:CounterModule",
-      "scope": "agent",
-      "config": {}
+  "models": {},
+  "embeddings": {
+    "index": {
+      "kind": "openai-compatible",
+      "base_url": "https://api.example.com/v1",
+      "model": "your-embedding-model",
+      "api_key_env": "MODEL_API_KEY"
     }
-  ]
+  },
+  "cognition": {"kind": "direct", "history_limit": 40},
+  "modules": []
 }
-~~~
+```
 
-~~~bash
-export OPENAI_API_KEY=sk-...
-python -m emc_runtime --config my.json chat
-~~~
+调用示例：`ctx.models.chat(messages, model="extractor", options={...})`、`ctx.models.embed(text, model="index")`。每次聊天调用的参数覆盖该模型的默认参数，不修改后续调用的默认值。OpenAI 兼容端点接收 JSON 参数，如 `temperature`、`seed`、`response_format`；具体参数支持由端点决定。文本回复接口固定单条、非流式响应。
 
-## 模块
+## 调度与实验
 
-模块是实现五个方法的普通 Python 类（`examples/counter_module.py` 是完整参考实现）：
+```python
+from datetime import datetime, timedelta
+from emc_runtime import Event
 
-| 方法 | 职责 |
-| --- | --- |
-| `initial_state()` | 无历史状态时的新建状态 |
-| `expose(state)` | 只读公共信号，供其他模块经 `ctx.exports` 读取 |
-| `prepare(event, state, ctx)` | 在深拷贝工作状态上计算，返回 `Prepared`（工作状态 + ContextBlock + trace） |
-| `finalize(event, prepared, reply, ctx)` | 模型回复后返回 `Finalized`（最终状态 + trace） |
-| `inspect(state)` | 只读呈现状态 |
+ctx.scheduler.schedule(
+    Event("internal_trigger", conversation_id=ctx.event.conversation_id,
+          metadata={"reason": "experiment"}),
+    due_at=datetime.fromisoformat(ctx.now) + timedelta(minutes=5),
+)
+```
 
-- 作用域：`agent`（跨会话共享）或 `conversation`（按会话隔离）。
-- 状态提交是全轮原子的：本轮所有消息、所有模块状态、turn 记录和全局 revision 在一个 SQLite 事务里落库；任何阶段失败则整轮回滚。
-- 模块只贡献带来源标注的数据块（ContextBlock），不改写系统提示词，不接管普通对话上下文。
+由实验宿主定期调用 `engine.run_due()`，或执行：
 
-详见 [docs/module-development.md](docs/module-development.md) 与 [docs/architecture.md](docs/architecture.md)。
+```bash
+python -m emc_runtime --config examples/research.json schedules
+python -m emc_runtime --config examples/research.json run-due --limit 10
+python -m emc_runtime --config examples/research.json fork data/control.sqlite3
+```
 
-## 测试
+分支实验配置中的 `database` 指向复制后的数据库。快照包括状态、经历、观察记录和待执行事件；模型配置与代码由实验者分别保存。`build_engine(config, clock=...)` 接受实现 `now() -> timezone-aware datetime` 的时钟，用于控制时间推进。
 
-~~~bash
-python -m unittest discover -v   # 38 个离线测试，覆盖规格 T01–T17
-~~~
+## 持久化与验证
 
-涉及真实网络的请求（真实 API 对话）未在 CI 中执行；Provider 传输层以注入 transport 的方式离线测试。
+数据库 schema 为 **v2**；配置文件 schema 为 **1**。请为新版配置新的数据库路径，版本不匹配时会拒绝打开，已有文件不会被迁移或覆盖。
 
-## 仓库结构
+状态、消息、turn 和调度变更整轮原子提交；调用观察记录独立持久化，失败后仍可查看。模型调用不处于数据库事务中，已产生的外部调用不会因状态回滚而撤销。
 
-~~~text
-src/emc_runtime/
-  contracts.py        事件、消息、模块协议、RunResult、异常体系
-  config.py           JSON 配置加载与校验
-  storage.py          SQLite：快照 / 单事务提交 / 只读查询 / 乐观并发
-  context.py          确定性上下文组装（固定顺序）
-  cognition.py        可替换认知策略（首版 direct：单次调用）
-  engine.py           单轮编排 [1]-[7]
-  modules.py          显式模块加载、注册与作用域
-  events.py           提交后观察事件总线（失败隔离）
-  providers/          offline 确定性回放 + OpenAI 兼容传输 + 可选 embedding
-  cli.py              turn / chat / trigger / history / inspect / scenario
-examples/             计数器模块与两份配置
-scenarios/smoke.json  冒烟剧本（含 internal_trigger）
-tests/                T01–T17 离线测试
-~~~
+```bash
+python -m unittest discover -v
+```
+
+测试使用离线模型和注入 transport。架构与研究接口见 [docs/architecture.md](docs/architecture.md)；默认流程的状态模块见 [docs/module-development.md](docs/module-development.md)。开发遵循工作台的[代码维护约定](https://github.com/entropy356/e-m-c.workbench/blob/main/rules/code-maintenance.md)。

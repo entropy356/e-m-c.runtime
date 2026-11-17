@@ -12,7 +12,7 @@ from .paths import PathSecurityError, readable_file
 
 SUPPORTED_SCHEMA_VERSION = 1
 PROVIDER_KINDS = ("offline", "openai-compatible")
-COGNITION_KINDS = ("direct",)
+COGNITION_KINDS = ("direct", "python")
 
 DEFAULT_SYSTEM_PROMPT = "You are a helpful conversational agent."
 DEFAULT_TRIGGER_PROMPT = (
@@ -111,6 +111,17 @@ def parse_config(data: Any) -> RuntimeConfig:
         raise ConfigError(
             f"cognition.kind must be one of {COGNITION_KINDS}, got {cognition_kind!r}"
         )
+    if cognition_kind == "python":
+        entrypoint = cognition.get("entrypoint")
+        if not isinstance(entrypoint, str) or ":" not in entrypoint:
+            raise ConfigError("cognition.entrypoint must be 'package.module:ClassName'")
+        _require_mapping(cognition.get("config", {}), "cognition.config")
+    for group in ("models", "embeddings"):
+        entries = _require_mapping(data.get(group, {}), group)
+        for name, params in entries.items():
+            if not isinstance(name, str) or not name.strip() or (group == "models" and name == "default"):
+                raise ConfigError(f"invalid {group} name {name!r}")
+            _require_mapping(params, f"{group}.{name}")
     system_prompt = data.get("system_prompt", DEFAULT_SYSTEM_PROMPT)
     if not isinstance(system_prompt, str) or not system_prompt.strip():
         raise ConfigError("system_prompt must be nonempty text")

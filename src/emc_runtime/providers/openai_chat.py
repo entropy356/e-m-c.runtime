@@ -15,7 +15,7 @@ import urllib.error
 import urllib.request
 from typing import Any, Callable, Mapping, Sequence
 
-from ..contracts import AssistantReply, ProviderError
+from ..contracts import AssistantReply, ProviderError, check_json_value
 
 DEFAULT_API_KEY_ENV = "OPENAI_API_KEY"
 DEFAULT_TIMEOUT = 60.0
@@ -96,7 +96,7 @@ class OpenAIChatProvider:
         timeout: float = DEFAULT_TIMEOUT,
         proxy: str | None = None,
         max_attempts: int = DEFAULT_MAX_ATTEMPTS,
-        transport: Callable[..., dict] = http_post_json,
+        transport: Callable[..., dict] | None = None,
     ):
         if not base_url.startswith("https://"):
             raise ProviderError("provider base_url must use HTTPS")
@@ -112,24 +112,31 @@ class OpenAIChatProvider:
     def generate(self, messages: Sequence[dict], options: Mapping[str, Any]) -> AssistantReply:
         merged = {**self.options, **dict(options)}
         payload: dict[str, Any] = {"model": self.model, "messages": list(messages)}
-        for key in ("temperature", "top_p", "max_tokens", "stop"):
-            if key in merged and merged[key] is not None:
-                payload[key] = merged[key]
-        result = self._transport(
-            self.base_url + "/chat/completions",
-            payload,
-            {"Authorization": f"Bearer {self.api_key}"},
-            self.timeout,
-            self.proxy,
-            self.max_attempts,
-        )
+        reserved = {'model', 'messages', 'stream', 'tools', 'tool_choice', 'n'}
+        if reserved.intersection(merged):
+            raise ProviderError(f'unsupported request overrides: {sorted(reserved.intersection(merged))}')
+        check_json_value(merged, 'provider options')
+        payload.update(merged)
+        try:
+            result = (self._transport or http_post_json)(
+                self.base_url + "/chat/completions",
+                payload,
+                {"Authorization": f"Bearer {self.api_key}"},
+                self.timeout,
+                self.proxy,
+                self.max_attempts,
+            )
+        except OSError:
+            raise ProviderError("provider connection failed or timed out") from None
         try:
             content = result["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError):
             raise ProviderError("invalid chat completion response") from None
         if not isinstance(content, str) or not content.strip():
             raise ProviderError("provider returned an empty reply; the turn was aborted")
-        return AssistantReply(content=content.strip())
+        return AssistantReply(content=content.strip(), usage=result.get('usage') or {},
+                              model=result.get('model', self.model),
+                              finish_reason=result['choices'][0].get('finish_reason'))
 
 
 def make_openai_provider(params: Mapping[str, Any]) -> OpenAIChatProvider:

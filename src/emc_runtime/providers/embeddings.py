@@ -105,3 +105,26 @@ class GeminiEmbeddingAdapter:
             return unit(result["embedding"]["values"])
         except (KeyError, IndexError, TypeError):
             raise ProviderError("invalid embedding response") from None
+
+
+def make_embedding_provider(params):
+    """Resolve an explicitly named embedding capability only when used."""
+    import os
+    kind = params.get('kind')
+    cls = {'openai-compatible': OpenAIEmbeddingAdapter, 'gemini': GeminiEmbeddingAdapter}.get(kind)
+    if cls is None:
+        raise ProviderError(f'unknown embedding provider kind {kind!r}')
+    base_url, model = params.get('base_url'), params.get('model')
+    if not isinstance(base_url, str) or not base_url.startswith('https://'):
+        raise ProviderError('embedding base_url must use HTTPS')
+    if not isinstance(model, str) or not model.strip():
+        raise ProviderError('embedding model must be nonempty text')
+    key_env = params.get('api_key_env', 'OPENAI_API_KEY' if kind == 'openai-compatible' else 'GEMINI_API_KEY')
+    if not isinstance(key_env, str) or not key_env.strip():
+        raise ProviderError('embedding api_key_env must name an environment variable')
+    api_key = os.environ.get(key_env, '')
+    if not api_key:
+        raise ProviderError(f'set the {key_env} environment variable')
+    return cls(base_url=base_url, model=model, api_key=api_key,
+               dimensions=params.get('dimensions'), timeout=params.get('timeout', 60),
+               proxy=params.get('proxy'))
