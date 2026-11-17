@@ -5,7 +5,10 @@ from __future__ import annotations
 import re
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Literal, Mapping, Protocol, Sequence, runtime_checkable
+from typing import Any, Literal, Mapping, Protocol, Sequence, TYPE_CHECKING, runtime_checkable
+
+if TYPE_CHECKING:
+    from .session import TurnContext
 
 #: Reserved scope key for agent-wide module state. Conversation ids that would
 #: collide with it are rejected at validation time.
@@ -73,6 +76,7 @@ class Event:
     content: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
     event_id: str = ""
+    occurred_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -84,6 +88,8 @@ class Message:
     role: str  # "user" | "assistant"
     content: str
     turn_id: str
+    message_id: int | None = None
+    created_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -129,6 +135,9 @@ class AssistantReply:
     """A model reply. The first version is plain text only."""
 
     content: str
+    usage: Mapping[str, Any] = field(default_factory=dict)
+    model: str | None = None
+    finish_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -140,7 +149,7 @@ class RunResult:
     conversation_id: str
     event_kind: str
     revision: int
-    reply: str
+    reply: str | None
     module_traces: dict
 
     def to_json_dict(self) -> dict:
@@ -185,14 +194,9 @@ class ChatProvider(Protocol):
 
 @runtime_checkable
 class CognitionStrategy(Protocol):
-    """Turns an assembled context into a reply using a chat provider."""
+    """A Python research workflow with transactional state and runtime services."""
 
-    def run(
-        self,
-        messages: Sequence[dict],
-        provider: ChatProvider,
-        options: Mapping[str, Any],
-    ) -> AssistantReply: ...
+    def run(self, ctx: TurnContext) -> AssistantReply | None: ...
 
 
 _WHITESPACE = re.compile(r"\s")
@@ -225,7 +229,7 @@ def _validated_content(kind: str, content: Any) -> str | None:
         raise EventValidationError(
             f"user_message content exceeds {MAX_CONTENT_CHARS} characters"
         )
-    return content.strip()
+    return content
 
 
 def _validated_metadata(metadata: Any) -> dict:
@@ -256,4 +260,5 @@ def validate_event(event: Event) -> Event:
         content=_validated_content(event.kind, event.content),
         metadata=_validated_metadata(event.metadata),
         event_id=_validated_event_id(event.event_id),
+        occurred_at=event.occurred_at,
     )

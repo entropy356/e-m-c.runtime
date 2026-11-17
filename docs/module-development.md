@@ -1,6 +1,6 @@
 # 模块开发指南
 
-模块是实现五个方法的普通 Python 类，通过配置文件显式注册。
+模块是默认 direct 流程使用的状态组件，通过配置文件显式注册。自定义研究流程也可成对调用 `ctx.prepare_modules()` 和 `ctx.finalize_modules(reply)`。多步模型调用、检索和时间编排使用研究流程接口，见 [架构说明](architecture.md)。
 
 ## 完整参考实现
 
@@ -58,11 +58,11 @@ class CounterModule:
 
 - **构造签名** `(config, module_id, scope)`；实例声明的 `module_id` / `scope` 必须与配置一致，否则启动失败。
 - **状态**是任意可 JSON 序列化数据（NaN/Infinity 被拒绝）。`initial_state` 只在无存量状态时使用；首次成功提交后才落库。
-- **prepare** 在深拷贝上工作；可读 `ctx.history`（只读原始历史）、`ctx.event`（当前事件）、`ctx.exports`（同快照其他模块的 expose 结果）。返回 `Prepared`；`context_blocks` 的 `source` 必须是自己的 module_id。
+- **prepare** 在深拷贝上工作；可读 `ctx.history`（不可变原始消息）、`ctx.event`（隔离的事件副本）、`ctx.exports`（同快照其他模块的 expose 结果；顶层只读，嵌套数据为本次调用的独立副本）。返回 `Prepared`；`context_blocks` 的 `source` 必须是自己的 module_id。
 - **finalize** 在模型回复后运行，返回 `Finalized`；其 `state` 即将原子提交的最终状态。
 - **ContextBlock** 只是带来源标注的数据，被包裹在"参考数据"框架中送入 LLM，排在基础系统指令之后、原始历史之前；模块不能改写系统提示词或历史。
 - **state_version**：状态结构变化时递增；与存量不一致时运行时报错且不覆盖旧状态。
-- **错误即整轮失败**：任何阶段抛异常，本轮不写入任何内容（消息、状态、turn 记录全部不落库），已扣费的模型调用不重放。
+- **错误即整轮失败**：任何阶段抛异常，本轮消息、状态、turn 和调度变更全部不提交；独立保存的 attempt 与模型调用记录仍可查看，已扣费的模型调用不重放。
 - **模块不得**：接触引擎对象、存储连接、其他模块的可变状态、Provider 或网络。
 
 ## 失败与并发

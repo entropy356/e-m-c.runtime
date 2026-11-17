@@ -12,7 +12,7 @@ from .paths import PathSecurityError, readable_file
 
 SUPPORTED_SCHEMA_VERSION = 1
 PROVIDER_KINDS = ("offline", "openai-compatible")
-COGNITION_KINDS = ("direct",)
+COGNITION_KINDS = ("direct", "python")
 
 DEFAULT_SYSTEM_PROMPT = "You are a helpful conversational agent."
 DEFAULT_TRIGGER_PROMPT = (
@@ -89,6 +89,30 @@ def _parse_modules(value: Any) -> tuple[ModuleSpec, ...]:
     return tuple(specs)
 
 
+def _parse_cognition(data: dict) -> dict:
+    cognition = _require_mapping(data.get("cognition", {"kind": "direct"}), "cognition")
+    cognition_kind = cognition.get("kind", "direct")
+    if cognition_kind not in COGNITION_KINDS:
+        raise ConfigError(
+            f"cognition.kind must be one of {COGNITION_KINDS}, got {cognition_kind!r}"
+        )
+    if cognition_kind == "python":
+        entrypoint = cognition.get("entrypoint")
+        if not isinstance(entrypoint, str) or ":" not in entrypoint:
+            raise ConfigError("cognition.entrypoint must be 'package.module:ClassName'")
+        _require_mapping(cognition.get("config", {}), "cognition.config")
+    return cognition
+
+
+def _validate_named_services(data: dict) -> None:
+    for group in ("models", "embeddings"):
+        entries = _require_mapping(data.get(group, {}), group)
+        for name, params in entries.items():
+            if not isinstance(name, str) or not name.strip() or (group == "models" and name == "default"):
+                raise ConfigError(f"invalid {group} name {name!r}")
+            _require_mapping(params, f"{group}.{name}")
+
+
 def parse_config(data: Any) -> RuntimeConfig:
     data = _require_mapping(data, "configuration")
     schema_version = data.get("schema_version")
@@ -105,12 +129,8 @@ def parse_config(data: Any) -> RuntimeConfig:
         raise ConfigError(
             f"provider.kind must be one of {PROVIDER_KINDS}, got {provider_kind!r}"
         )
-    cognition = _require_mapping(data.get("cognition", {"kind": "direct"}), "cognition")
-    cognition_kind = cognition.get("kind", "direct")
-    if cognition_kind not in COGNITION_KINDS:
-        raise ConfigError(
-            f"cognition.kind must be one of {COGNITION_KINDS}, got {cognition_kind!r}"
-        )
+    cognition = _parse_cognition(data)
+    _validate_named_services(data)
     system_prompt = data.get("system_prompt", DEFAULT_SYSTEM_PROMPT)
     if not isinstance(system_prompt, str) or not system_prompt.strip():
         raise ConfigError("system_prompt must be nonempty text")
@@ -122,7 +142,7 @@ def parse_config(data: Any) -> RuntimeConfig:
         database=database.strip(),
         provider_kind=provider_kind,
         provider_params=dict(provider),
-        cognition_kind=cognition_kind,
+        cognition_kind=cognition.get("kind", "direct"),
         cognition_params=dict(cognition),
         system_prompt=system_prompt,
         internal_trigger_prompt=trigger_prompt,

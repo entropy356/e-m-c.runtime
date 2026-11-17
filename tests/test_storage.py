@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import sqlite3
 import unittest
+from unittest import mock
 
-from emc_runtime import Engine, EventBus, Storage
+from emc_runtime import EMCError, Engine, EventBus, Storage
 from emc_runtime.cognition import make_cognition
 from emc_runtime.modules import ModuleRegistry
+from emc_runtime.paths import PathSecurityError
+from emc_runtime.storage import _connect
 
 from .helpers import OfflineProviderStub, TempDirTestCase, offline_config
 
@@ -84,6 +87,53 @@ class ReadOnlyQueriesTest(TempDirTestCase):
             self.assertEqual(conv_rows, 2)
         finally:
             raw.close()
+
+
+class StoragePathTest(TempDirTestCase):
+    def test_connection_uses_absolute_literal_filename(self):
+        path = self.tmp / 'nested' / '..' / 'experiment#mode=memory.sqlite3'
+        with mock.patch('emc_runtime.storage.sqlite3.connect') as connect:
+            with _connect(str(path)):
+                connect.assert_called_once_with(
+                    str(path.resolve()), timeout=10, isolation_level=None, uri=False)
+            connect.return_value.close.assert_called_once_with()
+
+    def test_storage_rejects_unsafe_paths_before_connecting(self):
+        for path in ('', '   ', 'bad\x00name'):
+            with self.subTest(path=path), mock.patch('emc_runtime.storage.sqlite3.connect') as connect:
+                with self.assertRaises(PathSecurityError):
+                    Storage(path)
+                connect.assert_not_called()
+
+    def test_fork_rejects_unsafe_paths_without_changing_source(self):
+        storage = Storage(str(self.tmp / 'source.sqlite3'))
+        for path in ('', '   ', 'bad\x00name', str(self.tmp)):
+            with self.subTest(path=path), self.assertRaises(PathSecurityError):
+                storage.fork(path)
+        self.assertEqual(storage.revision(), 0)
+
+    def test_fork_rejects_normalized_source_alias(self):
+        storage = Storage(str(self.tmp / 'source.sqlite3'))
+        with self.assertRaisesRegex(EMCError, 'must differ from source'):
+            storage.fork(str(self.tmp / 'unused' / '..' / 'source.sqlite3'))
+        self.assertEqual(storage.revision(), 0)
+
+    def test_failed_fork_removes_only_its_new_file(self):
+        storage = Storage(str(self.tmp / 'source.sqlite3'))
+        target = self.tmp / 'branch.sqlite3'
+        with mock.patch('emc_runtime.storage._connect', side_effect=RuntimeError('backup failed')):
+            with self.assertRaisesRegex(RuntimeError, 'backup failed'):
+                storage.fork(str(target))
+        self.assertFalse(target.exists())
+        self.assertEqual(storage.revision(), 0)
+
+    def test_existing_fork_destination_is_preserved(self):
+        storage = Storage(str(self.tmp / 'source.sqlite3'))
+        target = self.tmp / 'existing.sqlite3'
+        target.write_bytes(b'previous experiment')
+        with self.assertRaises(FileExistsError):
+            storage.fork(str(target))
+        self.assertEqual(target.read_bytes(), b'previous experiment')
 
 
 class SchemaGuardTest(TempDirTestCase):
