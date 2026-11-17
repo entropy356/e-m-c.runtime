@@ -330,7 +330,7 @@ def main(argv=None) -> int:
         if args.command == "scenario":
             return cmd_scenario(args, engine)
         parser.error(f"unknown command {args.command!r}")
-    except (EMCError, OSError, sqlite3.Error) as error:
+    except (EMCError, OSError, sqlite3.Error, PathSecurityError) as error:
         parser.exit(1, f"Error: {error}\n")
     return 2
 
