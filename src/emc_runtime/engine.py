@@ -48,6 +48,21 @@ class Engine:
         with self._lock:
             return self._run(event, _schedule_id)
 
+    @staticmethod
+    def _reply_content(reply):
+        if reply is None:
+            return None
+        if not isinstance(reply, AssistantReply) or not isinstance(reply.content, str) or not reply.content.strip():
+            raise ProviderError('cognition must return a nonempty AssistantReply or None')
+        return reply.content
+
+    def _record_failed_attempt(self, attempt_id, ctx, error):
+        try:
+            self.storage.finish_failed_attempt(attempt_id, stage=ctx.stage if ctx else 'snapshot',
+                error=f'{type(error).__name__}: {error}', finished_at=timestamp(self.clock.now()))
+        except Exception:
+            pass  # preserve the original failure; the durable attempt remains running
+
     def _run(self, raw_event, schedule_id):
         now = timestamp(self.clock.now())
         event = validate_event(raw_event)
@@ -65,11 +80,9 @@ class Engine:
                               storage=self.storage, resolve=self._resolve, attempt_id=attempt_id,
                               clock=self.clock, now=now)
             reply = self.cognition.run(ctx)
-            if reply is not None and (not isinstance(reply, AssistantReply) or not isinstance(reply.content, str) or not reply.content.strip()):
-                raise ProviderError('cognition must return a nonempty AssistantReply or None')
+            content = self._reply_content(reply)
             ctx.validate_completion()
             ctx.stage = 'commit'
-            content = reply.content if reply is not None else None
             messages = [('assistant', content)] if content is not None else []
             if event.kind == 'user_message':
                 messages.insert(0, ('user', event.content))
@@ -84,15 +97,11 @@ class Engine:
                 new_messages=messages, module_writes=ctx._module_writes,
                 workflow_writes=list(ctx.state._writes.values()), trace=trace,
                 scheduled=ctx.scheduler._scheduled, cancellations=ctx.scheduler._cancellations,
-                consumed_schedule=schedule_id, attempt_id=attempt_id,
+                consumed_schedule=schedule_id,
                 committed_at=timestamp(self.clock.now()),
             )
         except Exception as error:
-            try:
-                self.storage.finish_failed_attempt(attempt_id, stage=ctx.stage if ctx else 'snapshot',
-                    error=f'{type(error).__name__}: {error}', finished_at=timestamp(self.clock.now()))
-            except Exception:
-                pass  # preserve the original failure; the durable attempt remains running
+            self._record_failed_attempt(attempt_id, ctx, error)
             self.bus.publish({'type': 'turn_failed', 'event_id': event.event_id,
                               'conversation_id': event.conversation_id, 'event_kind': event.kind,
                               'attempt_id': attempt_id, 'stage': ctx.stage if ctx else 'snapshot'})

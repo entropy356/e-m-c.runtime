@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+from contextlib import closing
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from unittest import mock
@@ -315,7 +316,7 @@ class ResearchTests(TempDirTestCase):
 
         def conflict(ctx):
             import sqlite3
-            with sqlite3.connect(self.engine.storage.path) as db:
+            with closing(sqlite3.connect(self.engine.storage.path)) as db, db:
                 db.execute('UPDATE runtime_meta SET revision=revision+1')
             ctx.state.set('failed', True)
             return ctx.models.chat(ctx.assemble())
@@ -363,7 +364,7 @@ class ResearchTests(TempDirTestCase):
     def test_schema_mismatch_does_not_touch_database(self):
         import sqlite3
         path = str(self.tmp / 'old.sqlite3')
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             db.execute('CREATE TABLE runtime_meta(singleton_id INTEGER, schema_version INTEGER)')
             db.execute('INSERT INTO runtime_meta VALUES (1,1)')
         before = __import__('pathlib').Path(path).read_bytes()

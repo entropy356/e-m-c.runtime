@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 from .contracts import ConcurrencyConflict, EMCError, Message, dumps_json
+from .paths import writable_file
 
 SCHEMA_VERSION = 2
 
@@ -108,7 +109,9 @@ class ModuleStateWrite:
 
 @contextmanager
 def _connect(path: str):
-    connection = sqlite3.connect(path, timeout=10, isolation_level=None)
+    # Always use a normalized literal filename, never SQLite URI parameters.
+    database = writable_file(path)
+    connection = sqlite3.connect(str(database), timeout=10, isolation_level=None, uri=False)
     try:
         connection.execute("PRAGMA busy_timeout=10000")
         connection.execute("PRAGMA foreign_keys=ON")
@@ -121,9 +124,9 @@ class Storage:
     """Owns the database file. All methods are explicit about write intent."""
 
     def __init__(self, path: str):
-        self.path = str(path)
-        if self.path == ":memory:":
+        if str(path).strip() == ":memory:":
             raise EMCError("Storage requires a file-backed database")
+        self.path = str(writable_file(path))
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         with _connect(self.path) as db:
             if db.execute("SELECT 1 FROM sqlite_master WHERE name='runtime_meta'").fetchone():
@@ -279,7 +282,6 @@ class Storage:
         scheduled: Sequence[dict] = (),
         cancellations: Sequence[str] = (),
         consumed_schedule: str | None = None,
-        attempt_id: str | None = None,
         committed_at: str | None = None,
     ) -> int:
         """Atomically persist one turn; returns the new revision.
@@ -288,6 +290,9 @@ class Storage:
         the conversation's current last seq. Raises ConcurrencyConflict when the
         global revision or the conversation's last seq changed since the
         snapshot; nothing is written in that case.
+
+        Engine turns use their attempt ID as ``turn_id``; committing also marks
+        that attempt complete, if present.
         """
         encoded_trace = dumps_json(trace, "turn trace")
         with _connect(self.path) as db:
@@ -371,9 +376,8 @@ class Storage:
                         (job['schedule_id'], job['due_at'], scheduled_event_id,
                          dumps_json(job['event'], 'scheduled event')),
                     )
-                if attempt_id:
-                    db.execute("UPDATE attempts SET status='committed', finished_at=?, turn_id=?, stage='commit' WHERE attempt_id=?",
-                               (committed_at, turn_id, attempt_id))
+                db.execute("UPDATE attempts SET status='committed', finished_at=?, turn_id=?, stage='commit' WHERE attempt_id=?",
+                           (committed_at, turn_id, turn_id))
                 changed = db.execute(
                     "UPDATE runtime_meta SET revision=? WHERE singleton_id=1 AND revision=?",
                     (new_revision, current_revision),
@@ -471,13 +475,12 @@ class Storage:
 
     def fork(self, destination: str) -> Storage:
         """Copy one consistent database snapshot for an independent experiment."""
-        target = Path(destination)
+        target = writable_file(destination)
         if target.resolve() == Path(self.path).resolve():
             raise EMCError('fork destination must differ from source')
         target.parent.mkdir(parents=True, exist_ok=True)
         # Exclusive creation avoids overwriting any existing experiment.
-        with target.open('xb'):
-            pass
+        target.touch(exist_ok=False)
         try:
             with _connect(self.path) as source, _connect(str(target)) as dest:
                 source.backup(dest)
